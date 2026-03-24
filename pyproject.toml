@@ -1,0 +1,22 @@
+[project]
+name = "rpa-project"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "playwright>=1.58.0",
+    "openpyxl>=3.1.5",
+]
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# 明确指定只包含 app 目录，排除 logs
+packages = ["app"]
+
+[project.scripts]
+# 左边是你想在终端输入的命令，右边是代码路径
+rpa = "app.main:main" 
