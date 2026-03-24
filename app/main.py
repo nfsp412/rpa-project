@@ -12,6 +12,13 @@ from pathlib import Path
 from playwright.async_api import async_playwright
 
 from app.dataworks_hive_apply import run_apply, try_click_submit
+from app.dw_cookies import (
+    ENV_DW,
+    ENV_DW_USERNAME,
+    ENV_DWDATAWORKS,
+    dw_cookies_from_env,
+    load_dw_dotenv,
+)
 from app.rpa_excel import default_excel_path, load_rpa_sheet_row
 
 DATAWORKS_TASK_LIST = "http://dataworks.sina.com.cn/#/task/list"
@@ -47,17 +54,37 @@ async def _run(debug: bool, excel_path: Path) -> None:
     async with async_playwright() as p:
         browser = await p.chromium.launch(**launch_kwargs)
         context = await browser.new_context()
+
+        if not debug:
+            load_dw_dotenv()
+            cookies = dw_cookies_from_env()
+            if cookies is None:
+                print(
+                    "\n无头模式需要登录 Cookie：请在 rpa-project/.env 或环境中设置（缺一不可）：\n"
+                    f"  {ENV_DW}\n"
+                    f"  {ENV_DW_USERNAME}\n"
+                    f"  {ENV_DWDATAWORKS}\n"
+                    "\n调试请使用: uv run python -m app.main --debug\n",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                await browser.close()
+                raise SystemExit(1)
+            await context.add_cookies(cookies)
+
         page = await context.new_page()
         await page.goto(DATAWORKS_TASK_LIST, wait_until="domcontentloaded")
 
-        print(
-            "\n请在浏览器中完成内网登录（扫码等）。确认已进入任务列表后，回到终端继续。\n",
-            flush=True,
-        )
-        await asyncio.to_thread(
-            input,
-            "登录完成并进入任务列表后按回车继续... ",
-        )
+        if debug:
+            print(
+                "\n请在浏览器中完成内网登录（扫码等）。确认已进入任务列表后，回到终端继续。\n",
+                flush=True,
+            )
+            await asyncio.to_thread(
+                input,
+                "登录完成并进入任务列表后按回车继续... ",
+            )
+
         try:
             await page.wait_for_load_state("networkidle", timeout=15_000)
         except Exception:
