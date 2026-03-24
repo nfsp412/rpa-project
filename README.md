@@ -31,7 +31,7 @@ uv run python -m app.main
 uv run python -m app.main --debug
 ```
 
-指定 Excel（**默认路径**与 `app/rpa_excel.py` 中 `default_excel_path()` 一致：与 `rpa-project` 同级目录下 `create-table-output/20260323/create_table_info.xlsx`；更换默认目录或日期请直接改该函数）：
+指定 Excel（**默认路径**与 `app/rpa_excel.py` 中 `default_excel_path()` 一致：与 `rpa-project` 同级目录下 `create-table-output/YYYYMMDD/create_table_info.xlsx`，其中 `YYYYMMDD` 为**脚本运行当天**；需指定其它日期请使用 `--excel`）：
 
 ```bash
 uv run python -m app.main --excel /path/to/create_table_info.xlsx
@@ -51,7 +51,7 @@ uv run python -m unittest discover -s tests -p "test_*.py" -v
 
 | 模块 | 文件 | 内容概要 |
 |------|------|----------|
-| `rpa_excel` | `tests/test_rpa_excel.py` | `rpa` 表必填列/数仓分层/缺行与文件不存在等 |
+| `rpa_excel` | `tests/test_rpa_excel.py` | `rpa` 表必填列、多行、`表类型`（hive 执行 / clickhouse 与未知类型跳过）、数仓分层、空行与文件不存在等 |
 | `dw_cookies` | `tests/test_dw_cookies.py` | `dw_cookies_from_env` 缺项与空白、`load_dw_dotenv` 从临时 `.env` 注入 |
 
 **未覆盖**：Playwright 填表、`main._run` 端到端；这些依赖内网 DataWorks 与有效 Cookie，请用 `--debug` 或 `scripts/test_headless_cookies_login.py` 人工/实验验证。
@@ -86,6 +86,6 @@ RPA_TEST_COOKIE_DWDATAWORKS=eyJ...
 ## 说明
 
 - 访问地址为内网。**`--debug`**：在浏览器中手动登录（扫码等），终端按提示回车继续。**非 debug 无头**：依赖 `.env` 中 Cookie，无终端登录步骤。
-- **非 debug**（无头）时，填表结束后会自动尝试点击「提交」；**`--debug`** 时不会自动提交，便于核对后再手动提交。
-- **数据描述、建表语句、存储路径**从 Excel 工作表 **`rpa`** 读取：第 1 行为表头（列名须含 `数据描述信息`、`建表语句`、`存储路径值`），第 2 行为数据。可选列 **`数仓分层`**（如 `ods` / `DWD`）用于「数仓分层」下拉；缺列或空单元格时默认 `ODS`。映射见 `app/rpa_excel.py`。
+- **非 debug**（无头）时，每条 Hive 申请在填表结束后会依次尝试点击「提交」；**`--debug`** 时不会自动提交，便于核对后再手动提交。
+- **数据描述、建表语句、存储路径**从 Excel 工作表 **`rpa`** 读取：第 1 行为表头（列名须含 `数据描述信息`、`建表语句`、`存储路径值`），**第 2 行起可有多条数据**，脚本会逐条处理。可选列 **`数仓分层`**（如 `ods` / `DWD`）用于「数仓分层」下拉；缺列或空单元格时默认 `ODS`。可选列 **`表类型`**：`hive` 或空/缺列走 RPA；`clickhouse` 跳过该行（终端提示）；其他非空值记 warning 并跳过。`数据描述信息` 与 `建表语句` 均为空的行视为空行跳过。若没有任何有效数据行会报错；若有效行均为非 Hive 则正常退出且不打开浏览器。映射与过滤见 `app/rpa_excel.py` 中 `load_rpa_sheet_hive_rows`。
 - 成功结束时终端会打印提示；在 macOS 上还会尝试发送系统通知。

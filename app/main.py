@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from playwright.async_api import async_playwright
+from playwright.async_api import Page, async_playwright
 
 from app.dataworks_hive_apply import run_apply, try_click_submit
 from app.dw_cookies import (
@@ -19,7 +19,7 @@ from app.dw_cookies import (
     dw_cookies_from_env,
     load_dw_dotenv,
 )
-from app.rpa_excel import default_excel_path, load_rpa_sheet_row
+from app.rpa_excel import default_excel_path, load_rpa_sheet_hive_rows
 
 DATAWORKS_TASK_LIST = "http://dataworks.sina.com.cn/#/task/list"
 
@@ -43,13 +43,30 @@ def _notify_success(message: str) -> None:
             pass
 
 
+async def _goto_task_list_ready(page: Page) -> None:
+    await page.goto(DATAWORKS_TASK_LIST, wait_until="domcontentloaded")
+    try:
+        await page.wait_for_load_state("networkidle", timeout=15_000)
+    except Exception:
+        await page.wait_for_timeout(2000)
+
+
 async def _run(debug: bool, excel_path: Path) -> None:
+    rows = load_rpa_sheet_hive_rows(excel_path)
+    print(
+        f"已从 Excel 读取: {excel_path}，有效 Hive 申请 {len(rows)} 条。\n",
+        flush=True,
+    )
+    if not rows:
+        print(
+            "没有需要执行的 Hive 行（可能均为 clickhouse、未知表类型或已跳过）。\n",
+            flush=True,
+        )
+        return
+
     launch_kwargs: dict = {"headless": not debug}
     if debug:
         launch_kwargs["slow_mo"] = 80
-
-    row = load_rpa_sheet_row(excel_path)
-    print(f"已从 Excel 读取表单数据: {excel_path}\n", flush=True)
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(**launch_kwargs)
@@ -73,7 +90,7 @@ async def _run(debug: bool, excel_path: Path) -> None:
             await context.add_cookies(cookies)
 
         page = await context.new_page()
-        await page.goto(DATAWORKS_TASK_LIST, wait_until="domcontentloaded")
+        await _goto_task_list_ready(page)
 
         if debug:
             print(
@@ -85,31 +102,39 @@ async def _run(debug: bool, excel_path: Path) -> None:
                 "登录完成并进入任务列表后按回车继续... ",
             )
 
-        try:
-            await page.wait_for_load_state("networkidle", timeout=15_000)
-        except Exception:
-            await page.wait_for_timeout(2000)
-
         t0 = time.perf_counter()
-        await run_apply(page, row)
-        elapsed = time.perf_counter() - t0
+        total = len(rows)
+        for i, row in enumerate(rows):
+            if i > 0:
+                await _goto_task_list_ready(page)
 
-        if debug:
             print(
-                "说明：debug 模式下不会自动点击「提交」；需要提交时请手动操作。\n",
+                f"--- 处理第 {i + 1}/{total} 条 Hive 申请 ---\n",
                 flush=True,
             )
-        else:
-            submitted = await try_click_submit(page, timeout_ms=10_000)
-            if submitted:
-                print("已尝试点击页面「提交」按钮。\n", flush=True)
-            else:
+            await run_apply(page, row)
+
+            if debug:
                 print(
-                    "未在超时内找到可点击的「提交」按钮，请手动检查页面后提交。\n",
+                    "说明：debug 模式下不会自动点击「提交」；需要提交时请手动操作。\n",
                     flush=True,
                 )
+            else:
+                submitted = await try_click_submit(page, timeout_ms=10_000)
+                if submitted:
+                    print("已尝试点击页面「提交」按钮。\n", flush=True)
+                else:
+                    print(
+                        "未在超时内找到可点击的「提交」按钮，请手动检查页面后提交。\n",
+                        flush=True,
+                    )
+                await page.wait_for_timeout(1500)
 
-        _notify_success(f"离线表申请流程已执行完毕（耗时 {elapsed:.1f}s）")
+        elapsed = time.perf_counter() - t0
+
+        _notify_success(
+            f"离线表申请流程已执行完毕（共 {total} 条，耗时 {elapsed:.1f}s）"
+        )
 
         if debug:
             print(
@@ -142,7 +167,7 @@ def main() -> None:
         default=None,
         help=(
             "create_table_info.xlsx 路径；默认与 rpa-project 同级目录下的 "
-            "create-table-output/20260323/create_table_info.xlsx"
+            "create-table-output/YYYYMMDD/create_table_info.xlsx（运行当日）"
         ),
     )
     args = parser.parse_args()
