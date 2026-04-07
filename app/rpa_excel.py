@@ -17,6 +17,7 @@ HEADER_DDL = "建表语句"
 HEADER_STORAGE_PATH = "存储路径值"
 HEADER_WAREHOUSE_LAYER = "数仓分层"
 HEADER_TABLE_TYPE = "表类型"
+HEADER_STATUS = "执行状态"
 
 _DEFAULT_WAREHOUSE_LAYER = "ODS"
 
@@ -35,6 +36,7 @@ class RpaSheetRow:
     ddl_sql: str
     storage_path: str
     warehouse_layer: str
+    excel_row: int
 
 
 def _cell_str(value: object) -> str:
@@ -74,7 +76,9 @@ def _row_blank_for_rpa(data_row: tuple[object, ...], idx: dict[str, int]) -> boo
     )
 
 
-def _rpa_sheet_row_from_row(data_row: tuple[object, ...], idx: dict[str, int]) -> RpaSheetRow:
+def _rpa_sheet_row_from_row(
+    data_row: tuple[object, ...], idx: dict[str, int], excel_row: int
+) -> RpaSheetRow:
     if HEADER_WAREHOUSE_LAYER in idx:
         layer_raw = _col(data_row, idx, HEADER_WAREHOUSE_LAYER)
     else:
@@ -84,6 +88,7 @@ def _rpa_sheet_row_from_row(data_row: tuple[object, ...], idx: dict[str, int]) -
         ddl_sql=_col(data_row, idx, HEADER_DDL),
         storage_path=_col(data_row, idx, HEADER_STORAGE_PATH),
         warehouse_layer=_normalize_warehouse_layer(layer_raw),
+        excel_row=excel_row,
     )
 
 
@@ -141,6 +146,13 @@ def load_rpa_sheet_hive_rows(xlsx_path: Path) -> list[RpaSheetRow]:
                 raw_type = ""
                 t = ""
 
+            if HEADER_STATUS in idx and _col(data_row, idx, HEADER_STATUS) == "成功":
+                print(
+                    f"[rpa] 第 {excel_row} 行已成功，跳过。",
+                    flush=True,
+                )
+                continue
+
             if t == "clickhouse":
                 print(
                     f"[rpa] 第 {excel_row} 行表类型为 clickhouse，已跳过。",
@@ -148,7 +160,7 @@ def load_rpa_sheet_hive_rows(xlsx_path: Path) -> list[RpaSheetRow]:
                 )
                 continue
             if t in ("", "hive"):
-                hive_rows.append(_rpa_sheet_row_from_row(data_row, idx))
+                hive_rows.append(_rpa_sheet_row_from_row(data_row, idx, excel_row))
                 continue
 
             logger.warning(
@@ -163,5 +175,25 @@ def load_rpa_sheet_hive_rows(xlsx_path: Path) -> list[RpaSheetRow]:
             )
 
         return hive_rows
+    finally:
+        wb.close()
+
+
+def update_row_status(xlsx_path: Path, excel_row: int, status: str) -> None:
+    """回写"执行状态"到指定行。若列不存在则自动追加表头。"""
+    wb = load_workbook(xlsx_path)
+    try:
+        ws = wb[SHEET_NAME]
+        header_cells = list(ws.iter_rows(min_row=1, max_row=1, values_only=False))[0]
+        status_col: int | None = None
+        for cell in header_cells:
+            if _cell_str(cell.value) == HEADER_STATUS:
+                status_col = cell.column
+                break
+        if status_col is None:
+            status_col = len(header_cells) + 1
+            ws.cell(row=1, column=status_col, value=HEADER_STATUS)
+        ws.cell(row=excel_row, column=status_col, value=status)
+        wb.save(xlsx_path)
     finally:
         wb.close()

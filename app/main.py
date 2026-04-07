@@ -19,7 +19,7 @@ from app.dw_cookies import (
     dw_cookies_from_env,
     load_dw_dotenv,
 )
-from app.rpa_excel import default_excel_path, load_rpa_sheet_hive_rows
+from app.rpa_excel import default_excel_path, load_rpa_sheet_hive_rows, update_row_status
 
 DATAWORKS_TASK_LIST = "http://dataworks.sina.com.cn/#/task/list"
 
@@ -112,15 +112,32 @@ async def _run(debug: bool, excel_path: Path) -> None:
                 f"--- 处理第 {i + 1}/{total} 条 Hive 申请 ---\n",
                 flush=True,
             )
-            await run_apply(page, row)
+
+            try:
+                await run_apply(page, row)
+            except Exception as exc:
+                print(
+                    f"第 {i + 1} 条填写失败: {exc}\n",
+                    flush=True,
+                )
+                update_row_status(excel_path, row.excel_row, "失败")
+                continue
 
             if debug:
                 print(
-                    "说明：debug 模式下不会自动点击「提交」；需要提交时请手动操作。\n",
+                    "说明：debug 模式下不会自动点击「提交」；"
+                    "请在浏览器中手动点击提交按钮，完成后回到终端按回车继续下一条。\n",
                     flush=True,
                 )
+                await asyncio.to_thread(
+                    input,
+                    f"[debug] 第 {i + 1}/{total} 条已填写完毕，手动提交后按回车继续... ",
+                )
+                update_row_status(excel_path, row.excel_row, "成功")
             else:
                 submitted = await try_click_submit(page, timeout_ms=10_000)
+                status = "成功" if submitted else "失败"
+                update_row_status(excel_path, row.excel_row, status)
                 if submitted:
                     print("已尝试点击页面「提交」按钮。\n", flush=True)
                 else:
